@@ -21,6 +21,12 @@ function App() {
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminError, setAdminError] = useState("");
   const [orders, setOrders] = useState([]);
+  const emptyContactSettings = { businessName: "CARDORA", email: "", whatsapp: "", instagram: "", facebook: "", address: "" };
+  const [contactSettings, setContactSettings] = useState(emptyContactSettings);
+  const [contactDraft, setContactDraft] = useState(emptyContactSettings);
+  const [contactForm, setContactForm] = useState({ name: "", email: "", subject: "", message: "" });
+  const [contactBusy, setContactBusy] = useState(false);
+  const [contactMessages, setContactMessages] = useState([]);
   const [draft, setDraft] = useState({ name: "", description: "", price: "", category: "Personalized" });
   const [editingId, setEditingId] = useState("");
   const count = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -76,14 +82,50 @@ function App() {
     finally { setAdminBusy(false); }
   }
 
+  async function submitContact(event) {
+    event.preventDefault();
+    setContactBusy(true);
+    try {
+      const response = await fetch(API + "/api/contact", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(contactForm)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || "Message could not be sent.");
+      setContactForm({ name: "", email: "", subject: "", message: "" });
+      notify(data.message || "Your message has been sent.");
+    } catch (error) { notify(error.message); }
+    finally { setContactBusy(false); }
+  }
+
+  async function saveContactSettings(event) {
+    event.preventDefault();
+    setAdminError("");
+    try {
+      const data = await adminRequest("/api/admin/settings", { method: "PUT", body: JSON.stringify(contactDraft) });
+      setContactSettings({ ...emptyContactSettings, ...data });
+      setContactDraft({ ...emptyContactSettings, ...data });
+      notify("Business contact settings saved.");
+    } catch (error) { setAdminError(error.message); }
+  }
+
   async function loadAdminData(token = adminToken) {
     const headers = { Authorization: "Bearer " + token };
     const [productResponse, orderResponse] = await Promise.all([
       fetch(API + "/api/admin/products", { headers }),
-      fetch(API + "/api/admin/orders", { headers })
+      fetch(API + "/api/admin/orders", { headers }),
+      fetch(API + "/api/admin/settings", { headers }).catch(() => null),
+      fetch(API + "/api/admin/contact-messages", { headers }).catch(() => null)
     ]);
     if (!productResponse.ok || !orderResponse.ok) throw new Error("Admin session expired or access denied. Please sign in again.");
     const [productData, orderData] = await Promise.all([productResponse.json(), orderResponse.json()]);
+    const settingsResponse = await fetch(API + "/api/settings");
+    if (settingsResponse.ok) {
+      const settingsData = await settingsResponse.json();
+      setContactSettings({ ...emptyContactSettings, ...settingsData });
+      setContactDraft({ ...emptyContactSettings, ...settingsData });
+    }
+    const messagesResponse = await fetch(API + "/api/admin/contact-messages", { headers });
+    if (messagesResponse.ok) setContactMessages(await messagesResponse.json());
     setProducts(productData.map((p, i) => ({ ...p, tone: ["olive", "sand", "brown"][i % 3], mark: p.name?.[0]?.toUpperCase() || "C", tag: "CARDORA" })));
     setOrders(orderData);
   }
@@ -159,15 +201,35 @@ function App() {
             <button className="add-button" onClick={() => addToCart(product)}>Add to bag <span>＋</span></button>
           </article>)}</div>
         </section>
-        <section className="custom section" id="custom"><div className="custom-ornament">✳</div><div><p className="eyebrow">YOUR IDEA, OUR CANVAS</p><h2>Make it <em>personal.</em></h2><p>Have a color, name, or theme in mind? Tell us what you imagine and we’ll help shape a design that feels like you.</p><a className="button button-light" href="mailto:hello@cardora.example?subject=Custom%20Card%20Enquiry">Request a custom design <span>↗</span></a></div><div className="custom-side-note">A thoughtful<br/>little something<br/>made just for you.</div></section>
+        <section className="custom section" id="custom"><div className="custom-ornament">✳</div><div><p className="eyebrow">YOUR IDEA, OUR CANVAS</p><h2>Make it <em>personal.</em></h2><p>Have a color, name, or theme in mind? Tell us what you imagine and we’ll help shape a design that feels like you.</p><a className="button button-light" href="#contact">Request a custom design <span>↗</span></a></div><div className="custom-side-note">A thoughtful<br/>little something<br/>made just for you.</div></section>
         <section className="about section" id="about"><p className="eyebrow">A NOTE FROM CARDORA</p><h2>Designed with care.<br/><em>Chosen by you.</em></h2><p>We believe everyday things can feel special. CARDORA is a small design-led concept for personalized student-themed cards and stationery, made to celebrate your style and campus moments.</p></section>
+        <section className="contact-section section" id="contact">
+          <div className="section-heading"><div><p className="eyebrow">LET'S CONNECT</p><h2>Get in <em>touch.</em></h2></div><p>Questions, custom designs, or order enquiries? Send the store owner a message.</p></div>
+          <div className="contact-layout">
+            <form className="contact-form" onSubmit={submitContact}>
+              <label>Your name<input value={contactForm.name} onChange={e => setContactForm({ ...contactForm, name: e.target.value })} required maxLength="80" autoComplete="name"/></label>
+              <label>Your email<input type="email" value={contactForm.email} onChange={e => setContactForm({ ...contactForm, email: e.target.value })} required maxLength="160" autoComplete="email"/></label>
+              <label>Subject<input value={contactForm.subject} onChange={e => setContactForm({ ...contactForm, subject: e.target.value })} maxLength="120" placeholder="Custom design / product question"/></label>
+              <label>Message<textarea value={contactForm.message} onChange={e => setContactForm({ ...contactForm, message: e.target.value })} required maxLength="3000" rows="5" placeholder="Write your message here…"/></label>
+              <button className="button button-dark" disabled={contactBusy}>{contactBusy ? "Sending…" : "Send message ↗"}</button>
+            </form>
+            <aside className="contact-details"><p className="eyebrow">STORE CONTACT</p><h3>{contactSettings.businessName || "CARDORA"}</h3>
+              {contactSettings.email && <a href={"mailto:" + contactSettings.email}>Email: {contactSettings.email}</a>}
+              {contactSettings.whatsapp && <a target="_blank" rel="noreferrer" href={"https://wa.me/" + contactSettings.whatsapp.replace(/[^0-9]/g, "")}>WhatsApp: {contactSettings.whatsapp}</a>}
+              {contactSettings.instagram && <a target="_blank" rel="noreferrer" href={contactSettings.instagram.startsWith("http") ? contactSettings.instagram : "https://instagram.com/" + contactSettings.instagram.replace(/^@/, "")}>Instagram ↗</a>}
+              {contactSettings.facebook && <a target="_blank" rel="noreferrer" href={contactSettings.facebook.startsWith("http") ? contactSettings.facebook : "https://facebook.com/" + contactSettings.facebook.replace(/^@/, "")}>Facebook ↗</a>}
+              {contactSettings.address && <p>{contactSettings.address}</p>}
+              {!contactSettings.email && !contactSettings.whatsapp && !contactSettings.instagram && !contactSettings.facebook && <p className="contact-hint">The store owner can add their public contact details from the Admin dashboard.</p>}
+            </aside>
+          </div>
+        </section>
         <section className="bag-section section" id="bag"><div className="section-heading"><div><p className="eyebrow">YOUR SELECTION</p><h2>Your shopping <em>bag.</em></h2></div><span className="bag-count">{count} item{count === 1 ? "" : "s"}</span></div>
           {cart.length === 0 ? <div className="empty-bag">Your bag is waiting for something lovely. <a href="#shop">Explore the collection ↗</a></div> :
             <div className="bag-content"><div>{cart.map(item => <div className="bag-item" key={item._id}><div className={"bag-thumb " + (item.tone || "olive")}>{item.mark || item.name?.[0]}</div><div className="bag-item-name"><b>{item.name}</b><small>Rs. {Number(item.price).toLocaleString("en-PK")}</small></div><div className="quantity"><button onClick={() => changeQuantity(item._id, -1)} aria-label="Decrease quantity">−</button><span>{item.quantity}</span><button onClick={() => changeQuantity(item._id, 1)} aria-label="Increase quantity">＋</button></div><b>Rs. {(item.price * item.quantity).toLocaleString("en-PK")}</b></div>)}</div>
               <aside className="summary"><h3>Order summary</h3><div><span>Subtotal</span><b>Rs. {total.toLocaleString("en-PK")}</b></div><p>Delivery charges are confirmed after your location is provided.</p><button className="button button-dark" onClick={() => notify("Checkout is a demo. Connect payment and delivery services before accepting live orders.")}>Continue to checkout ↗</button></aside></div>}
         </section>
       </main>
-      <footer className="footer"><a className="brand footer-brand" href="#home"><span className="brand-mark">C</span><span>CARDORA<small>IDENTITY, DESIGNED WITH ELEGANCE</small></span></a><p>Thoughtful little details for everyday moments.</p><div><a href="#shop">Shop</a><a href="#custom">Custom design</a><a href="mailto:hello@cardora.example">Contact</a><button className="admin-link" onClick={openAdmin}>Admin dashboard</button></div><small>© {new Date().getFullYear()} CARDORA. All rights reserved.</small></footer>
+      <footer className="footer"><a className="brand footer-brand" href="#home"><span className="brand-mark">C</span><span>CARDORA<small>IDENTITY, DESIGNED WITH ELEGANCE</small></span></a><p>Thoughtful little details for everyday moments.</p><div><a href="#shop">Shop</a><a href="#custom">Custom design</a><a href="#contact">Contact</a><button className="admin-link" onClick={openAdmin}>Admin dashboard</button></div><small>© {new Date().getFullYear()} CARDORA. All rights reserved.</small></footer>
       <p className="legal-note">CARDORA offers personalized designs and student-themed merchandise. Official institutional ID cards may only be issued by, or with written authorization from, the relevant educational institution.</p>
 
       {adminOpen && <div className="admin-overlay" role="dialog" aria-modal="true" aria-label="CARDORA admin dashboard">
@@ -191,6 +253,19 @@ function App() {
               </form>
               <div className="admin-products"><h3>Manage products</h3>{products.map(product => <div className="admin-row" key={product._id}><div><b>{product.name}</b><small>Rs. {Number(product.price).toLocaleString("en-PK")} · {product.category}</small></div><button className="text-action" onClick={() => { setEditingId(product._id); setDraft({ name: product.name, description: product.description || "", price: String(product.price), category: product.category || "Personalized" }); }}>Edit</button><button className="text-action danger" onClick={() => deleteProduct(product._id)}>Delete</button></div>)}</div>
             </div>
+            <form className="admin-contact-settings" onSubmit={saveContactSettings}>
+              <h3>Store contact settings</h3><p className="admin-muted">The store owner can update these details after buying the website. Leave a field blank to hide it from visitors.</p>
+              <div className="admin-contact-grid">
+                <label>Business name<input value={contactDraft.businessName} onChange={e => setContactDraft({ ...contactDraft, businessName: e.target.value })} maxLength="100"/></label>
+                <label>Business email<input type="email" value={contactDraft.email} onChange={e => setContactDraft({ ...contactDraft, email: e.target.value })} maxLength="160" placeholder="owner@example.com"/></label>
+                <label>WhatsApp number<input value={contactDraft.whatsapp} onChange={e => setContactDraft({ ...contactDraft, whatsapp: e.target.value })} maxLength="30" placeholder="923001234567"/></label>
+                <label>Instagram username or URL<input value={contactDraft.instagram} onChange={e => setContactDraft({ ...contactDraft, instagram: e.target.value })} maxLength="200"/></label>
+                <label>Facebook page URL<input value={contactDraft.facebook} onChange={e => setContactDraft({ ...contactDraft, facebook: e.target.value })} maxLength="200"/></label>
+                <label>Business address<input value={contactDraft.address} onChange={e => setContactDraft({ ...contactDraft, address: e.target.value })} maxLength="300"/></label>
+              </div>
+              <button className="button button-dark">Save contact settings</button>
+            </form>
+            <div className="admin-messages"><h3>Customer messages</h3>{contactMessages.length === 0 ? <p className="admin-muted">No messages received yet.</p> : contactMessages.map(message => <article className="admin-message" key={message._id}><b>{message.subject || "Website enquiry"}</b><small>{message.name} · {message.email} · {new Date(message.createdAt).toLocaleString()}</small><p>{message.message}</p></article>)}</div>
             <div className="admin-orders"><h3>Customer orders</h3>{orders.length === 0 ? <p className="admin-muted">No customer orders yet.</p> : orders.map(order => <div className="admin-order" key={order._id}><div><b>Order #{order._id.slice(-7)}</b><small>{order.customer?.email || "Customer"} · Rs. {Number(order.total).toLocaleString("en-PK")}</small><small>{order.items?.map(item => item.name + " × " + item.quantity).join(", ")}</small></div><select value={order.status} onChange={e => updateOrderStatus(order._id, e.target.value)}><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="processing">Processing</option><option value="shipped">Shipped</option><option value="completed">Completed</option><option value="cancelled">Cancelled</option></select></div>)}</div>
           </div>}
         </section>
