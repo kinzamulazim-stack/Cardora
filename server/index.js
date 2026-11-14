@@ -13,15 +13,16 @@ app.use(express.json({ limit: "20kb" }));
 const productSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 100 },
   description: { type: String, default: "", maxlength: 1000 },
-  price: { type: Number, required: true, min: 0 },
-  category: { type: String, default: "Personalized" },
+  price: { type: Number, required: true, min: 1 },
+  category: { type: String, enum: ["Personalized", "Minimal", "Stationery"], default: "Personalized" },
   active: { type: Boolean, default: true }
 }, { timestamps: true });
 
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true, maxlength: 80 },
   email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  passwordHash: { type: String, required: true }
+  passwordHash: { type: String, required: true },
+  role: { type: String, enum: ["customer", "admin"], default: "customer" }
 }, { timestamps: true });
 
 const orderSchema = new mongoose.Schema({
@@ -37,10 +38,19 @@ const User = mongoose.model("User", userSchema);
 const Order = mongoose.model("Order", orderSchema);
 
 function auth(req, res, next) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  const token = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
   if (!token) return res.status(401).json({ message: "Sign in is required." });
   try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
   catch { return res.status(401).json({ message: "Session expired. Please sign in again." }); }
+}
+
+async function adminOnly(req, res, next) {
+  try {
+    const user = await User.findById(req.user.userId).select("role email");
+    if (!user || user.role !== "admin") return res.status(403).json({ message: "Administrator access is required." });
+    req.admin = user;
+    next();
+  } catch { res.status(401).json({ message: "Please sign in again." }); }
 }
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "CARDORA API" }));
@@ -54,13 +64,13 @@ app.get("/api/products", async (_req, res) => {
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || typeof password !== "string" || password.length < 8) return res.status(400).json({ message: "Enter your name, a valid email, and a password of at least 8 characters." });
+    if (!name || !/^\\S+@\\S+\\.\\S+$/.test(String(email || "")) || typeof password !== "string" || password.length < 8) return res.status(400).json({ message: "Enter your name, a valid email, and a password of at least 8 characters." });
     const normalizedEmail = String(email).trim().toLowerCase();
     if (await User.findOne({ email: normalizedEmail })) return res.status(409).json({ message: "An account with this email already exists." });
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await User.create({ name: String(name).trim(), email: normalizedEmail, passwordHash });
+    const user = await User.create({ name: String(name).trim(), email: normalizedEmail, passwordHash, role: "customer" });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "2h" });
-    res.status(201).json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    res.status(201).json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch { res.status(500).json({ message: "Registration could not be completed." }); }
 });
 
@@ -70,20 +80,64 @@ app.post("/api/auth/login", async (req, res) => {
     const user = await User.findOne({ email });
     if (!user || !(await bcrypt.compare(String(req.body.password || ""), user.passwordHash))) return res.status(401).json({ message: "Email or password is incorrect." });
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "2h" });
-    res.json({ token, user: { id: user.id, name: user.name, email: user.email } });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch { res.status(500).json({ message: "Sign in could not be completed." }); }
+});
+
+app.get("/api/admin/products", auth, adminOnly, async (_req, res) => {
+  try { res.json(await Product.find().sort({ createdAt: -1 })); }
+  catch { res.status(500).json({ message: "Could not load products." }); }
+});
+app.post("/api/admin/products", auth, adminOnly, async (req, res) => {
+  try {
+    const { name, description = "", price, category = "Personalized" } = req.body;
+    if (!String(name || "").trim() || !Number.isFinite(Number(price)) || Number(price) < 1) return res.status(400).json({ message: "Enter a product name and a valid price." });
+    const product = await Product.create({ name: String(name).trim(), description: String(description).slice(0, 1000), price: Number(price), category });
+    res.status(201).json(product);
+  } catch (error) { res.status(400).json({ message: error.name === "ValidationError" ? "Choose a valid product category." : "Product could not be added." }); }
+});
+app.put("/api/admin/products/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const { name, description = "", price, category } = req.body;
+    if (!String(name || "").trim() || !Number.isFinite(Number(price)) || Number(price) < 1) return res.status(400).json({ message: "Enter a product name and a valid price." });
+    const product = await Product.findByIdAndUpdate(req.params.id, { name: String(name).trim(), description: String(description).slice(0, 1000), price: Number(price), category }, { new: true, runValidators: true });
+    if (!product) return res.status(404).json({ message: "Product not found." });
+    res.json(product);
+  } catch (error) { res.status(400).json({ message: error.name === "ValidationError" ? "Choose a valid product category." : "Product could not be updated." }); }
+});
+app.delete("/api/admin/products/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const product = await Product.findByIdAndDelete(req.params.id);
+    if (!product) return res.status(404).json({ message: "Product not found." });
+    res.json({ message: "Product deleted." });
+  } catch { res.status(400).json({ message: "Invalid product ID." }); }
+});
+app.get("/api/admin/orders", auth, adminOnly, async (_req, res) => {
+  try { res.json(await Order.find().populate("customer", "name email").sort({ createdAt: -1 })); }
+  catch { res.status(500).json({ message: "Could not load orders." }); }
+});
+app.patch("/api/admin/orders/:id", auth, adminOnly, async (req, res) => {
+  const allowed = ["pending", "confirmed", "processing", "shipped", "completed", "cancelled"];
+  if (!allowed.includes(req.body.status)) return res.status(400).json({ message: "Choose a valid order status." });
+  try {
+    const order = await Order.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true, runValidators: true });
+    if (!order) return res.status(404).json({ message: "Order not found." });
+    res.json(order);
+  } catch { res.status(400).json({ message: "Invalid order ID." }); }
 });
 
 app.post("/api/orders", auth, async (req, res) => {
   try {
     const { items, deliveryDetails } = req.body;
-    if (!Array.isArray(items) || items.length < 1 || items.length > 20 || !deliveryDetails) return res.status(400).json({ message: "Add items and delivery details." });
-    const cleanItems = items.map(item => ({
-      productId: String(item.productId || "").slice(0, 80),
-      name: String(item.name || "CARDORA item").slice(0, 100),
-      quantity: Math.min(20, Math.max(1, Number.parseInt(item.quantity, 10) || 1)),
-      unitPrice: Math.max(0, Number(item.unitPrice) || 0)
-    }));
+    if (!Array.isArray(items) || items.length < 1 || items.length > 20 || !String(deliveryDetails || "").trim()) return res.status(400).json({ message: "Add items and delivery details." });
+    const cleanItems = [];
+    for (const item of items) {
+      const quantity = Number.parseInt(item.quantity, 10);
+      if (!item.productId || !Number.isInteger(quantity) || quantity < 1 || quantity > 20) return res.status(400).json({ message: "One or more order items are invalid." });
+      const product = await Product.findOne({ _id: item.productId, active: true });
+      if (!product) return res.status(400).json({ message: "A selected product is no longer available." });
+      cleanItems.push({ productId: product.id, name: product.name, quantity, unitPrice: product.price });
+    }
     const total = cleanItems.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
     const order = await Order.create({ customer: req.user.userId, items: cleanItems, total, deliveryDetails: String(deliveryDetails).slice(0, 1000) });
     res.status(201).json({ orderId: order.id, status: order.status, total: order.total });
