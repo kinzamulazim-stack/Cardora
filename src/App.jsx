@@ -15,7 +15,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem("cardora_admin_token") || "");
-  const [adminUser, setAdminUser] = useState(null);
+  const [adminUser, setAdminUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem("cardora_admin_user") || "null"); } catch { return null; } });
   const [adminEmail, setAdminEmail] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
@@ -70,7 +70,7 @@ function App() {
       const data = await adminRequest("/api/auth/login", { method: "POST", body: JSON.stringify({ email: adminEmail, password: adminPassword }) });
       if (data.user?.role !== "admin") throw new Error("This account does not have administrator access.");
       sessionStorage.setItem("cardora_admin_token", data.token);
-      setAdminToken(data.token); setAdminUser(data.user); setAdminPassword("");
+      setAdminToken(data.token); setAdminUser(data.user); sessionStorage.setItem("cardora_admin_user", JSON.stringify(data.user)); setAdminPassword("");
       await loadAdminData(data.token);
     } catch (error) { setAdminError(error.message); }
     finally { setAdminBusy(false); }
@@ -97,7 +97,7 @@ function App() {
   }
 
   function logoutAdmin() {
-    sessionStorage.removeItem("cardora_admin_token");
+    sessionStorage.removeItem("cardora_admin_token"); sessionStorage.removeItem("cardora_admin_user");
     setAdminToken(""); setAdminUser(null); setOrders([]);
   }
 
