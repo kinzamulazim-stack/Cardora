@@ -37,6 +37,26 @@ const Product = mongoose.model("Product", productSchema);
 const User = mongoose.model("User", userSchema);
 const Order = mongoose.model("Order", orderSchema);
 
+const siteSettingsSchema = new mongoose.Schema({
+  businessName: { type: String, default: "CARDORA", maxlength: 100 },
+  email: { type: String, default: "", maxlength: 160 },
+  whatsapp: { type: String, default: "", maxlength: 30 },
+  instagram: { type: String, default: "", maxlength: 200 },
+  facebook: { type: String, default: "", maxlength: 200 },
+  address: { type: String, default: "", maxlength: 300 }
+}, { timestamps: true });
+
+const contactMessageSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 80 },
+  email: { type: String, required: true, trim: true, lowercase: true, maxlength: 160 },
+  subject: { type: String, trim: true, maxlength: 120, default: "Website enquiry" },
+  message: { type: String, required: true, trim: true, maxlength: 3000 },
+  read: { type: Boolean, default: false }
+}, { timestamps: true });
+
+const SiteSettings = mongoose.model("SiteSettings", siteSettingsSchema);
+const ContactMessage = mongoose.model("ContactMessage", contactMessageSchema);
+
 function auth(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ message: "Sign in is required." });
@@ -54,6 +74,28 @@ async function adminOnly(req, res, next) {
 }
 
 app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "CARDORA API" }));
+app.get("/api/settings", async (_req, res) => {
+  try {
+    const settings = await SiteSettings.findOne().lean();
+    res.json(settings || { businessName: "CARDORA", email: "", whatsapp: "", instagram: "", facebook: "", address: "" });
+  } catch { res.status(500).json({ message: "Could not load contact settings." }); }
+});
+
+app.post("/api/contact", async (req, res) => {
+  try {
+    const { name, email, subject = "", message } = req.body;
+    if (!String(name || "").trim() || !/^\\S+@\\S+\\.\\S+$/.test(String(email || "")) || !String(message || "").trim()) {
+      return res.status(400).json({ message: "Enter your name, a valid email, and a message." });
+    }
+    await ContactMessage.create({
+      name: String(name).trim(), email: String(email).trim().toLowerCase(),
+      subject: String(subject).trim().slice(0, 120) || "Website enquiry",
+      message: String(message).trim().slice(0, 3000)
+    });
+    res.status(201).json({ message: "Your message has been sent to the website owner." });
+  } catch { res.status(500).json({ message: "Your message could not be sent. Please try again." }); }
+});
+
 app.get("/api/products", async (_req, res) => {
   try {
     const products = await Product.find({ active: true }).select("name description price category").sort({ createdAt: -1 });
@@ -82,6 +124,27 @@ app.post("/api/auth/login", async (req, res) => {
     const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: "2h" });
     res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
   } catch { res.status(500).json({ message: "Sign in could not be completed." }); }
+});
+
+app.put("/api/admin/settings", auth, adminOnly, async (req, res) => {
+  try {
+    const clean = {
+      businessName: String(req.body.businessName || "CARDORA").trim().slice(0, 100),
+      email: String(req.body.email || "").trim().slice(0, 160),
+      whatsapp: String(req.body.whatsapp || "").trim().slice(0, 30),
+      instagram: String(req.body.instagram || "").trim().slice(0, 200),
+      facebook: String(req.body.facebook || "").trim().slice(0, 200),
+      address: String(req.body.address || "").trim().slice(0, 300)
+    };
+    if (clean.email && !/^\\S+@\\S+\\.\\S+$/.test(clean.email)) return res.status(400).json({ message: "Enter a valid business email." });
+    const settings = await SiteSettings.findOneAndUpdate({}, clean, { new: true, upsert: true, runValidators: true });
+    res.json(settings);
+  } catch { res.status(400).json({ message: "Contact settings could not be saved." }); }
+});
+
+app.get("/api/admin/contact-messages", auth, adminOnly, async (_req, res) => {
+  try { res.json(await ContactMessage.find().sort({ createdAt: -1 }).limit(100)); }
+  catch { res.status(500).json({ message: "Could not load contact messages." }); }
 });
 
 app.get("/api/admin/products", auth, adminOnly, async (_req, res) => {
