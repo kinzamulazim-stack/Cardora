@@ -38,7 +38,7 @@ const User = mongoose.model("User", userSchema);
 const Order = mongoose.model("Order", orderSchema);
 
 function auth(req, res, next) {
-  const token = req.headers.authorization?.replace(/^Bearer\\s+/i, "");
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) return res.status(401).json({ message: "Sign in is required." });
   try { req.user = jwt.verify(token, process.env.JWT_SECRET); next(); }
   catch { return res.status(401).json({ message: "Session expired. Please sign in again." }); }
@@ -64,7 +64,7 @@ app.get("/api/products", async (_req, res) => {
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !/^\\S+@\\S+\\.\\S+$/.test(String(email || "")) || typeof password !== "string" || password.length < 8) return res.status(400).json({ message: "Enter your name, a valid email, and a password of at least 8 characters." });
+    if (!name || !/^\S+@\S+\.\S+$/.test(String(email || "")) || typeof password !== "string" || password.length < 8) return res.status(400).json({ message: "Enter your name, a valid email, and a password of at least 8 characters." });
     const normalizedEmail = String(email).trim().toLowerCase();
     if (await User.findOne({ email: normalizedEmail })) return res.status(409).json({ message: "An account with this email already exists." });
     const passwordHash = await bcrypt.hash(password, 12);
