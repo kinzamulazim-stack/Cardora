@@ -30,7 +30,7 @@ function App() {
   useEffect(() => {
     fetch(API + "/api/products")
       .then(response => response.ok ? response.json() : Promise.reject())
-      .then(data => { if (Array.isArray(data) && data.length) setProducts(data.map((p, i) => ({ ...p, _id: p._id || String(i), tone: ["olive", "sand", "brown"][i % 3], mark: p.name?.[0]?.toUpperCase() || "C", tag: "CARDORA" })); })
+      .then(data => { if (Array.isArray(data) && data.length) setProducts(data.map((p, i) => ({ ...p, _id: p._id || String(i), tone: ["olive", "sand", "brown"][i % 3], mark: p.name?.[0]?.toUpperCase() || "C", tag: "CARDORA" }))); })
       .catch(() => {});
   }, []);
 
